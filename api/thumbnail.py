@@ -1,114 +1,187 @@
+"""
+Vercel 썸네일 API - 1:1 비율, 포커스 키워드 전용 (일본어 버전)
+각 줄마다 다른 색상 (노란색, 초록색, 핑크색)
+"""
+
 from http.server import BaseHTTPRequestHandler
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import json
+import urllib.request
 
 class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        try:
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            # 키워드만 사용
+            keyword = data.get('keyword', 'キーワードなし')
+            bg_color1 = data.get('bg_color1', '#667eea')
+            bg_color2 = data.get('bg_color2', '#764ba2')
+            
+            # 썸네일 생성 (1:1 비율)
+            thumbnail = self.create_thumbnail(keyword, bg_color1, bg_color2)
+            
+            # PNG로 변환
+            buffer = BytesIO()
+            thumbnail.save(buffer, format='PNG', quality=95)
+            buffer.seek(0)
+            
+            # Binary로 직접 반환
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.send_header('Content-Length', str(len(buffer.getvalue())))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            self.wfile.write(buffer.getvalue())
+            
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            
+            error_response = {
+                'success': False,
+                'error': str(e)
+            }
+            
+            self.wfile.write(json.dumps(error_response).encode('utf-8'))
     
-    def _set_headers(self, status=200, content_type='image/png'):
-        self.send_response(status)
-        self.send_header('Content-type', content_type)
+    def do_OPTIONS(self):
+        self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
     
-    def do_OPTIONS(self):
-        self._set_headers()
-        
-    def do_POST(self):
+    def download_japanese_font(self):
+        """일본어 폰트 다운로드 (Noto Sans CJK JP Bold)"""
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            data = json.loads(post_data.decode('utf-8'))
-            
-            title = data.get('title', 'タイトルなし')
-            keyword = data.get('keyword', '')
-            bg_color1 = data.get('bg_color1', '#667eea')
-            bg_color2 = data.get('bg_color2', '#764ba2')
-            
-            img_binary = create_thumbnail(title, keyword, bg_color1, bg_color2)
-            
-            self._set_headers(200, 'image/png')
-            self.wfile.write(img_binary)
-            
-        except Exception as e:
-            self._set_headers(500, 'application/json')
-            error_response = {
-                'success': False,
-                'error': str(e)
-            }
-            self.wfile.write(json.dumps(error_response).encode('utf-8'))
-
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-
-def create_thumbnail(title, keyword, bg_color1='#667eea', bg_color2='#764ba2'):
-    color1 = hex_to_rgb(bg_color1)
-    color2 = hex_to_rgb(bg_color2)
+            font_url = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf"
+            response = urllib.request.urlopen(font_url, timeout=10)
+            return BytesIO(response.read())
+        except:
+            try:
+                font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf"
+                response = urllib.request.urlopen(font_url, timeout=10)
+                return BytesIO(response.read())
+            except:
+                return None
     
-    img = Image.new('RGB', (1200, 630), color=color1)
-    draw = ImageDraw.Draw(img)
-    
-    for i in range(630):
-        ratio = i / 630
-        r = int(color1[0] + (color2[0] - color1[0]) * ratio)
-        g = int(color1[1] + (color2[1] - color1[1]) * ratio)
-        b = int(color1[2] + (color2[2] - color1[2]) * ratio)
-        draw.line([(0, i), (1200, i)], fill=(r, g, b))
-    
-    try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
-        font_keyword = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 35)
-    except:
-        font_title = ImageFont.load_default()
-        font_keyword = ImageFont.load_default()
-    
-    max_width = 1000
-    lines = []
-    words = title.split()
-    current_line = ''
-    
-    for word in words:
-        test_line = current_line + word + ' '
-        bbox = draw.textbbox((0, 0), test_line, font=font_title)
-        if (bbox[2] - bbox[0]) < max_width:
-            current_line = test_line
+    def load_font(self, size):
+        """일본어 폰트 로드"""
+        font_data = self.download_japanese_font()
+        
+        if font_data:
+            try:
+                return ImageFont.truetype(font_data, size)
+            except:
+                return ImageFont.load_default()
         else:
-            if current_line:
-                lines.append(current_line.strip())
-            current_line = word + ' '
+            return ImageFont.load_default()
     
-    if current_line:
-        lines.append(current_line.strip())
+    def split_japanese_text(self, text, max_lines=4):
+        """일본어 텍스트를 띄어쓰기 기준으로 분리 (최대 4줄)"""
+        words = text.split()
+        return words[:max_lines]
     
-    y = 200
-    for line in lines[:3]:
-        bbox = draw.textbbox((0, 0), line, font=font_title)
-        width = bbox[2] - bbox[0]
-        x = (1200 - width) // 2
-        draw.text((x+3, y+3), line, font=font_title, fill=(0, 0, 0, 128))
-        draw.text((x, y), line, font=font_title, fill='white')
-        y += 80
+    def create_thumbnail(self, keyword, bg_color1, bg_color2):
+        """1:1 썸네일 생성 - 포커스 키워드만"""
+        # 1:1 비율 (정사각형)
+        size = 1080
+        
+        img = Image.new('RGB', (size, size), color=bg_color1)
+        draw = ImageDraw.Draw(img)
+        
+        # 그라데이션 배경
+        self.draw_gradient(draw, size, size, bg_color1, bg_color2)
+        
+        # 키워드를 띄어쓰기로 분리
+        lines = self.split_japanese_text(keyword, max_lines=4)
+        num_lines = len(lines)
+        
+        # 줄 색상 (노란색, 초록색, 핑크색, 핑크색)
+        line_colors = [
+            '#fff371',  # 노란색 (Gold)
+            '#62ff00',  # 초록색 (Lime)
+            '#ff00a2',  # 핑크색 (DeepPink)
+            '#ff00a2'   # 핑크색 (DeepPink)
+        ]
+        
+        # 폰트 크기 계산 (화면의 85% 채우도록)
+        if num_lines == 1:
+            font_size = 320
+        elif num_lines == 2:
+            font_size = 260
+        elif num_lines == 3:
+            font_size = 210
+        else:  # 4줄
+            font_size = 170
+        
+        font = self.load_font(font_size)
+        
+        # 전체 텍스트 높이 계산
+        total_height = 0
+        line_heights = []
+        
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_height = bbox[3] - bbox[1]
+            line_heights.append(line_height)
+            total_height += line_height
+        
+        # 줄 간격
+        line_spacing = 60
+        total_height += line_spacing * (num_lines - 1)
+        
+        # 시작 Y 위치 (중앙 정렬)
+        y_offset = (size - total_height) // 2
+        
+        # 각 줄 그리기
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            text_width = bbox[2] - bbox[0]
+            
+            # X 위치 (중앙 정렬)
+            x = (size - text_width) // 2
+            
+            # 색상 선택
+            color = line_colors[i]
+            
+            # 검은색 테두리 (15px, 8방향)
+            outline_width = 15
+            for offset_x in range(-outline_width, outline_width + 1):
+                for offset_y in range(-outline_width, outline_width + 1):
+                    if offset_x != 0 or offset_y != 0:
+                        draw.text((x + offset_x, y_offset + offset_y), 
+                                 line, font=font, fill='black')
+            
+            # 메인 텍스트 (컬러)
+            draw.text((x, y_offset), line, font=font, fill=color)
+            
+            # 다음 줄 위치
+            y_offset += line_heights[i] + line_spacing
+        
+        return img
     
-    if keyword:
-        badge_y = 520
-        bbox = draw.textbbox((0, 0), keyword, font=font_keyword)
-        badge_width = (bbox[2] - bbox[0]) + 40
-        badge_x = (1200 - badge_width) // 2
-        draw.rounded_rectangle(
-            [badge_x, badge_y, badge_x + badge_width, badge_y + 55],
-            radius=28,
-            fill=color2
-        )
-        text_bbox = draw.textbbox((0, 0), keyword, font=font_keyword)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_x = badge_x + (badge_width - text_width) // 2
-        draw.text((text_x, badge_y + 10), keyword, font=font_keyword, fill='white')
+    def draw_gradient(self, draw, width, height, color1, color2):
+        """그라데이션 배경"""
+        r1, g1, b1 = self.hex_to_rgb(color1)
+        r2, g2, b2 = self.hex_to_rgb(color2)
+        
+        for y in range(height):
+            ratio = y / height
+            r = int(r1 + (r2 - r1) * ratio)
+            g = int(g1 + (g2 - g1) * ratio)
+            b = int(b1 + (b2 - b1) * ratio)
+            
+            draw.line([(0, y), (width, y)], fill=(r, g, b))
     
-    buffer = BytesIO()
-    img.save(buffer, format='PNG', quality=95)
-    buffer.seek(0)
-    
-    return buffer.read()
+    def hex_to_rgb(self, hex_color):
+        """HEX to RGB"""
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))

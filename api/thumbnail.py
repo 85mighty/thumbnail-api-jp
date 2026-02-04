@@ -2,11 +2,10 @@ from http.server import BaseHTTPRequestHandler
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import json
-import base64
 
 class handler(BaseHTTPRequestHandler):
     
-    def _set_headers(self, status=200, content_type='application/json'):
+    def _set_headers(self, status=200, content_type='image/png'):
         self.send_response(status)
         self.send_header('Content-type', content_type)
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -28,17 +27,13 @@ class handler(BaseHTTPRequestHandler):
             bg_color1 = data.get('bg_color1', '#667eea')
             bg_color2 = data.get('bg_color2', '#764ba2')
             
-            img_base64 = create_thumbnail(title, keyword, bg_color1, bg_color2)
+            img_binary = create_thumbnail(title, keyword, bg_color1, bg_color2)
             
-            self._set_headers()
-            result = {
-                'success': True,
-                'image': img_base64
-            }
-            self.wfile.write(json.dumps(result).encode('utf-8'))
+            self._set_headers(200, 'image/png')
+            self.wfile.write(img_binary)
             
         except Exception as e:
-            self._set_headers(500)
+            self._set_headers(500, 'application/json')
             error_response = {
                 'success': False,
                 'error': str(e)
@@ -115,6 +110,5 @@ def create_thumbnail(title, keyword, bg_color1='#667eea', bg_color2='#764ba2'):
     buffer = BytesIO()
     img.save(buffer, format='PNG', quality=95)
     buffer.seek(0)
-    img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
     
-    return img_base64
+    return buffer.read()

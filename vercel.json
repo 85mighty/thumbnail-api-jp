@@ -1,14 +1,7 @@
 {
-  "builds": [
-    {
-      "src": "api/thumbnail.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/thumbnail",
-      "dest": "api/thumbnail.py"
-    }
-  ]
+  "functions": {
+    "api/thumbnail.py": {"maxDuration": 60},
+    "api/publish.py": {"maxDuration": 300},
+    "api/finalize.py": {"maxDuration": 60}
+  }
 }
